@@ -1,0 +1,17 @@
+[
+  {
+    "titre": "Belle villa F5 à Cocody Angré",
+    "type_transaction": "Vente",
+    "type_bien": "Villa",
+    "ville": "Abidjan",
+    "quartier": "Cocody Angré",
+    "prix": "85000000",
+    "surface": "250",
+    "pieces": "5",
+    "chambres": "4",
+    "description": "Magnifique villa de standing dans un quartier calme et sécurisé. Salon spacieux, cuisine équipée, 4 chambres avec dressing, 2 salles de bain, grande terrasse et jardin. Parking 2 voitures. Proche des commodités.",
+    "tel": "07 00 00 00 00",
+    "whatsapp": "07 00 00 00 00",
+    "sites": ["jiji", "ivoiredomi", "moboo"]
+  }
+]
