@@ -1,17 +1,50 @@
 [
   {
-    "titre": "Belle villa F5 à Cocody Angré",
-    "type_transaction": "Vente",
+    "titre": "À LOUER — VILLA DUPLEX 6 PIÈCES HAUT STANDING | RIVIERA GOLF 4 BEVERLY HILLS",
+    "type_transaction": "location",
     "type_bien": "Villa",
     "ville": "Abidjan",
-    "quartier": "Cocody Angré",
-    "prix": "85000000",
-    "surface": "250",
-    "pieces": "5",
+    "quartier": "Riviera golf 4 berverly hills",
+    "prix": "3700000",
+    "surface": "400",
+    "pieces": "6",
     "chambres": "4",
-    "description": "Magnifique villa de standing dans un quartier calme et sécurisé. Salon spacieux, cuisine équipée, 4 chambres avec dressing, 2 salles de bain, grande terrasse et jardin. Parking 2 voitures. Proche des commodités.",
-    "tel": "07 00 00 00 00",
-    "whatsapp": "07 00 00 00 00",
+    "description": "🏡 À LOUER — VILLA DUPLEX 6 PIÈCES HAUT STANDING | RIVIERA GOLF 4 BEVERLY HILLS
+
+Située dans une résidence sécurisée de haut standing, cette villa moderne entièrement climatisée offre un cadre de vie alliant confort, élégance et sécurité.
+
+⸻
+
+Composition :
+4 chambres spacieuses
+Séjour / salle à manger lumineux
+Cuisine semi-équipée (four, micro-ondes, gazinière, cave à vin)
+Dépendance
+
+⸻
+
+Extérieurs & commodités :
+Piscine privée
+Jardin
+2 places de parking
+Cave
+
+⸻
+
+Résidence :
+Salle de sport
+Sécurité 24h/24
+Vidéosurveillance
+
+⸻
+
+💰 Loyer : 3,7 millions FCFA (négociable)
+
+✨ Environnement premium — prestations complètes — idéal pour une clientèle exigeante
+
+Visite sur rendez-vous",
+    "tel": "01 03 46 94 81",
+    "whatsapp": "01 03 46 94 81",
     "sites": ["jiji", "ivoiredomi", "moboo"]
   }
 ]
