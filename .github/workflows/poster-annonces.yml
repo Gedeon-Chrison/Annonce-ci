@@ -1,1 +1,34 @@
+name: Poster annonces immobilières
 
+on:
+  push:
+    paths:
+      - 'annonces.json'
+  workflow_dispatch:
+
+jobs:
+  poster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Installer les dépendances
+        run: npm install puppeteer-core @sparticuz/chromium
+
+      - name: Lancer le script de publication
+        env:
+          JIJI_EMAIL: ${{ secrets.JIJI_EMAIL }}
+          JIJI_PASSWORD: ${{ secrets.JIJI_PASSWORD }}
+          IVOIREDOMI_EMAIL: ${{ secrets.IVOIREDOMI_EMAIL }}
+          IVOIREDOMI_PASSWORD: ${{ secrets.IVOIREDOMI_PASSWORD }}
+          MOBOO_EMAIL: ${{ secrets.MOBOO_EMAIL }}
+          MOBOO_PASSWORD: ${{ secrets.MOBOO_PASSWORD }}
+        run: node poster.js
