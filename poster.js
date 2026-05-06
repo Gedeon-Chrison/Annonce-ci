@@ -1,6 +1,6 @@
 /**
- * AnnonceCI — Script GitHub Actions v2
- * Correction : attente des champs JS + sélecteurs étendus + debug HTML
+ * AnnonceCI — Script GitHub Actions v3
+ * Corrections ciblées par site selon analyse des logs
  */
 
 const puppeteer = require('puppeteer-core');
@@ -17,8 +17,7 @@ const COMPTES = {
 
 async function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Attend qu'un sélecteur apparaisse parmi une liste (le premier trouvé)
-async function waitForAny(page, selectors, timeout = 15000) {
+async function waitForAny(page, selectors, timeout = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     for (const sel of selectors) {
@@ -27,66 +26,50 @@ async function waitForAny(page, selectors, timeout = 15000) {
         if (el) return { el, sel };
       } catch(e) {}
     }
-    await wait(500);
+    await wait(600);
   }
   return null;
 }
 
-// Remplit un champ en attendant qu'il apparaisse
 async function typeIn(page, selectors, text) {
   const sels = Array.isArray(selectors) ? selectors : [selectors];
-  const found = await waitForAny(page, sels, 12000);
-  if (!found) {
-    console.log(`  ⚠️  Champ introuvable: ${sels[0]}`);
-    return false;
-  }
+  const found = await waitForAny(page, sels, 15000);
+  if (!found) { console.log(`  ⚠️  Champ introuvable: ${sels[0]}`); return false; }
   try {
     await page.click(found.sel, { clickCount: 3 });
     await page.type(found.sel, String(text), { delay: 40 });
+    console.log(`  ✓ Champ rempli: ${found.sel}`);
     return true;
-  } catch(e) {
-    console.log(`  ⚠️  Erreur remplissage: ${found.sel}`);
-    return false;
-  }
+  } catch(e) { console.log(`  ⚠️  Erreur remplissage: ${found.sel}`); return false; }
 }
 
-// Clique sur un bouton parmi une liste
-async function clickAny(page, selectors, timeout = 8000) {
+async function clickAny(page, selectors, timeout = 10000) {
   const sels = Array.isArray(selectors) ? selectors : [selectors];
   const found = await waitForAny(page, sels, timeout);
   if (!found) return false;
-  try {
-    await page.click(found.sel);
-    return true;
-  } catch(e) { return false; }
+  try { await page.click(found.sel); console.log(`  ✓ Cliqué: ${found.sel}`); return true; }
+  catch(e) { return false; }
 }
 
-// Screenshot + dump HTML pour debug
 async function screenshot(page, name) {
   try {
-    await page.screenshot({ path: `screenshot-${name}.png` });
-    // Sauvegarde aussi le HTML pour analyser les vrais sélecteurs
+    await page.screenshot({ path: `screenshot-${name}.png`, fullPage: false });
     const html = await page.content();
     const inputs = html.match(/<input[^>]*>/gi) || [];
-    const forms = html.match(/<form[^>]*>/gi) || [];
-    console.log(`  📸 ${name} — ${forms.length} form(s), ${inputs.length} input(s) détectés`);
-    // Log des inputs trouvés pour debug
-    inputs.slice(0, 10).forEach(inp => {
+    console.log(`  📸 ${name} — ${inputs.length} input(s)`);
+    inputs.slice(0, 6).forEach(inp => {
       const type = (inp.match(/type="([^"]*)"/) || [])[1] || '?';
       const name = (inp.match(/name="([^"]*)"/) || [])[1] || '';
-      const id = (inp.match(/id="([^"]*)"/) || [])[1] || '';
       const placeholder = (inp.match(/placeholder="([^"]*)"/) || [])[1] || '';
-      console.log(`      input: type=${type} name=${name} id=${id} placeholder=${placeholder}`);
+      if (type !== 'hidden') console.log(`      → type=${type} name=${name} placeholder=${placeholder}`);
     });
   } catch(e) {}
 }
 
-// Upload photos
 async function uploadPhotos(page, photos) {
-  if (!photos || photos.length === 0) return;
+  if (!photos || !photos.length) return;
   const fichiers = photos.filter(p => fs.existsSync(p));
-  if (!fichiers.length) { console.log('  ⚠️  Photos introuvables'); return; }
-  console.log(`  📷 Upload de ${fichiers.length} photo(s)...`);
+  if (!fichiers.length) return;
   try {
     await page.evaluate(() => {
       document.querySelectorAll('input[type="file"]').forEach(i => {
@@ -95,184 +78,242 @@ async function uploadPhotos(page, photos) {
     });
     await wait(500);
     const input = await page.$('input[type="file"]');
-    if (input) {
-      await input.uploadFile(...fichiers);
-      await wait(2000);
-      console.log(`  ✅ ${fichiers.length} photo(s) uploadée(s)`);
-    }
-  } catch(e) { console.log(`  ⚠️  Upload photos échoué: ${e.message}`); }
+    if (input) { await input.uploadFile(...fichiers); await wait(2000); console.log(`  ✅ ${fichiers.length} photo(s) uploadée(s)`); }
+  } catch(e) { console.log(`  ⚠️  Upload photos échoué`); }
 }
 
-// ─── CONNEXION GÉNÉRIQUE ──────────────────────────────────────────────────────
-async function seConnecter(page, loginUrl, email, password, siteName) {
-  console.log(`  → Connexion à ${siteName}...`);
-  await page.goto(loginUrl, { waitUntil: 'networkidle2', timeout: 30000 });
-  await wait(3000); // Attend le JS
-  await screenshot(page, `${siteName}-login`);
+// ─── JIJI — Contournement Cloudflare ─────────────────────────────────────────
+// Jiji utilise Cloudflare Turnstile qui bloque les bots.
+// Solution : on attend longuement que le challenge se résolve automatiquement,
+// et on utilise des headers réalistes pour passer pour un vrai navigateur.
+async function posterJiji(page, annonce) {
+  console.log('\n  🌐 JIJI.CO.CI');
 
-  const emailSelectors = [
-    'input[type="email"]',
-    'input[name="email"]',
-    'input[name="username"]',
-    'input[name="login"]',
-    'input[id="email"]',
-    'input[id="username"]',
-    'input[placeholder*="email" i]',
-    'input[placeholder*="mail" i]',
-    'input[autocomplete="email"]',
-    'input[autocomplete="username"]',
-  ];
+  // Headers ultra réalistes pour tromper Cloudflare
+  await page.setExtraHTTPHeaders({
+    'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'sec-ch-ua': '"Chromium";v="120", "Google Chrome";v="120"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Linux"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Upgrade-Insecure-Requests': '1',
+  });
 
-  const passwordSelectors = [
-    'input[type="password"]',
-    'input[name="password"]',
-    'input[name="pass"]',
-    'input[id="password"]',
-    'input[placeholder*="mot de passe" i]',
-    'input[placeholder*="password" i]',
-    'input[autocomplete="current-password"]',
-  ];
+  // D'abord visiter la page d'accueil pour établir les cookies
+  console.log('  → Visite de la page d\'accueil pour établir les cookies...');
+  await page.goto('https://jiji.co.ci', { waitUntil: 'networkidle2', timeout: 30000 });
+  await wait(5000);
 
-  const submitSelectors = [
-    'button[type="submit"]',
-    'input[type="submit"]',
-    'button.login',
-    'button.signin',
-    'button.btn-login',
-    'button.btn-primary',
-    '[class*="login-btn"]',
-    '[class*="submit"]',
-  ];
+  // Ensuite la page de login
+  await page.goto('https://jiji.co.ci/login', { waitUntil: 'networkidle2', timeout: 30000 });
+  await wait(8000); // Attente longue pour le challenge Cloudflare
+  await screenshot(page, 'jiji-login');
 
-  const emailOk = await typeIn(page, emailSelectors, email);
-  const passOk = await typeIn(page, passwordSelectors, password);
+  // Chercher le formulaire avec beaucoup de patience
+  const emailOk = await typeIn(page, [
+    'input[type="email"]', 'input[name="email"]', 'input[name="session[email]"]',
+    'input[id="email"]', 'input[placeholder*="email" i]', 'input[placeholder*="mail" i]',
+  ], COMPTES.jiji.email);
 
-  if (!emailOk || !passOk) {
-    console.log(`  ⚠️  Formulaire de connexion non trouvé sur ${siteName} — vérifier le screenshot`);
+  const passOk = await typeIn(page, [
+    'input[type="password"]', 'input[name="password"]', 'input[name="session[password]"]',
+  ], COMPTES.jiji.password);
+
+  if (!emailOk) {
+    console.log('  ❌ Jiji bloque l\'accès via Cloudflare — ce site est difficile à automatiser.');
+    console.log('  💡 Conseil : poste manuellement sur Jiji, utilise Ivoiredomi et Moboo pour l\'automatisation.');
+    return;
   }
 
-  await wait(500);
-  await clickAny(page, submitSelectors);
+  await clickAny(page, ['button[type="submit"]', 'input[type="submit"]', 'button.btn-primary']);
   await wait(4000);
-  console.log(`  ✅ Connexion envoyée sur ${siteName}`);
+
+  await page.goto('https://jiji.co.ci/post-ad', { waitUntil: 'networkidle2', timeout: 30000 });
+  await wait(5000);
+  await screenshot(page, 'jiji-post-form');
+
+  const desc = annonce.description || `${annonce.type_bien} · ${annonce.ville} ${annonce.quartier} · ${annonce.prix} FCFA · Tél: ${annonce.tel}`;
+
+  await typeIn(page, ['input[name="title"]', 'input[name="ad[title]"]', 'input[placeholder*="titre" i]', 'input[placeholder*="title" i]'], annonce.titre);
+  await typeIn(page, ['input[name="price"]', 'input[name="ad[price]"]', 'input[placeholder*="prix" i]', 'input[placeholder*="price" i]'], annonce.prix);
+  await typeIn(page, ['textarea[name="description"]', 'textarea[name="ad[description]"]', 'textarea[placeholder*="description" i]', 'textarea'], desc);
+  await typeIn(page, ['input[name="phone"]', 'input[name="ad[phone]"]', 'input[type="tel"]', 'input[placeholder*="phone" i]'], annonce.tel);
+  await uploadPhotos(page, annonce.photos);
+
+  await screenshot(page, 'jiji-filled');
+  const submitted = await clickAny(page, ['button[type="submit"]', 'input[type="submit"]', 'button.btn-primary', 'button[class*="submit"]']);
+  await wait(5000);
+  await screenshot(page, 'jiji-result');
+  if (submitted) console.log('  ✅ Annonce soumise sur Jiji');
 }
 
-// ─── FORMULAIRE ANNONCE GÉNÉRIQUE ─────────────────────────────────────────────
-async function remplirFormulaire(page, annonce, siteName) {
-  await wait(3000);
-  await screenshot(page, `${siteName}-form`);
+// ─── IVOIREDOMI — Login avec username + redirection correcte ─────────────────
+// Ivoiredomi utilise WordPress (Houzez theme) : champ "username" pas "email"
+// Après login réussi il faut naviguer vers la page de dépôt d'annonce
+async function posterIvoiredomi(page, annonce) {
+  console.log('\n  🌐 IVOIREDOMI.CI');
+  await page.goto('https://ivoiredomi.ci/connexion', { waitUntil: 'networkidle2', timeout: 30000 });
+  await wait(4000);
+  await screenshot(page, 'ivoiredomi-login');
 
-  const desc = annonce.description ||
-    `${annonce.type_bien} à ${annonce.type_transaction.toLowerCase()} · ${annonce.ville} ${annonce.quartier} · ` +
-    `${annonce.surface ? annonce.surface + 'm² · ' : ''}${annonce.pieces} pièces · ${annonce.prix} FCFA · Tél: ${annonce.tel}`;
+  // Ivoiredomi = WordPress/Houzez : champ "username" (pas email)
+  await typeIn(page, [
+    'input[name="username"]',
+    'input[name="log"]',
+    'input[id="username"]',
+    'input[placeholder*="utilisateur" i]',
+    'input[placeholder*="email" i]',
+  ], COMPTES.ivoiredomi.email);
 
   await typeIn(page, [
-    'input[name="title"]', 'input[name="titre"]', 'input[name="subject"]',
-    'input[id="title"]', 'input[id="titre"]',
-    'input[placeholder*="titre" i]', 'input[placeholder*="title" i]',
-    'input[placeholder*="objet" i]', 'input[placeholder*="annonce" i]',
-    '[class*="title"] input', '[class*="titre"] input',
+    'input[type="password"]',
+    'input[name="password"]',
+    'input[name="pwd"]',
+  ], COMPTES.ivoiredomi.password);
+
+  await clickAny(page, [
+    'button[type="submit"]', 'input[type="submit"]',
+    'button.btn-primary', '.houzez-login-btn',
+    'input[name="wp-submit"]',
+  ]);
+  await wait(5000);
+  await screenshot(page, 'ivoiredomi-apres-login');
+
+  // Aller directement sur la page de soumission d'annonce
+  const postUrls = [
+    'https://ivoiredomi.ci/deposer-une-annonce',
+    'https://ivoiredomi.ci/deposer-annonce',
+    'https://ivoiredomi.ci/submit-property',
+    'https://ivoiredomi.ci/soumettre-une-propriete',
+    'https://ivoiredomi.ci/ajouter-annonce',
+  ];
+
+  let formTrouve = false;
+  for (const url of postUrls) {
+    try {
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
+      await wait(4000);
+      await screenshot(page, `ivoiredomi-form-${url.split('/').pop()}`);
+      const html = await page.content();
+      // Vérifier qu'on est bien sur un formulaire d'annonce
+      if (html.includes('title') && html.includes('price') || html.includes('prix') || html.includes('property')) {
+        console.log(`  ✓ Formulaire trouvé sur: ${url}`);
+        formTrouve = true;
+        break;
+      }
+    } catch(e) {}
+  }
+
+  if (!formTrouve) {
+    console.log('  ⚠️  Page de dépôt d\'annonce introuvable — vérifier les screenshots');
+  }
+
+  const desc = annonce.description || `${annonce.type_bien} · ${annonce.ville} ${annonce.quartier} · ${annonce.prix} FCFA · Tél: ${annonce.tel}`;
+
+  await typeIn(page, [
+    'input[name="title"]', 'input[name="fave_title"]', 'input[name="property_title"]',
+    'input[id="title"]', 'input[placeholder*="titre" i]', 'input[placeholder*="title" i]',
   ], annonce.titre);
 
   await typeIn(page, [
-    'input[name="price"]', 'input[name="prix"]',
-    'input[id="price"]', 'input[id="prix"]',
-    'input[placeholder*="prix" i]', 'input[placeholder*="price" i]',
-    'input[placeholder*="loyer" i]', 'input[placeholder*="montant" i]',
-    '[class*="price"] input', '[class*="prix"] input',
+    'input[name="price"]', 'input[name="fave_property_price"]', 'input[name="property_price"]',
+    'input[id="price"]', 'input[placeholder*="prix" i]', 'input[placeholder*="price" i]',
   ], annonce.prix);
 
   await typeIn(page, [
-    'textarea[name="description"]', 'textarea[name="body"]', 'textarea[name="content"]',
-    'textarea[id="description"]', 'textarea[placeholder*="description" i]',
-    'textarea[placeholder*="détail" i]', 'textarea[placeholder*="votre annonce" i]',
-    'textarea',
+    'textarea[name="description"]', 'textarea[name="fave_property_description"]',
+    'textarea[id="description"]', 'textarea[placeholder*="description" i]', 'textarea',
   ], desc);
 
   await typeIn(page, [
-    'input[name="phone"]', 'input[name="telephone"]', 'input[name="tel"]',
-    'input[name="phone_number"]', 'input[id="phone"]', 'input[id="telephone"]',
-    'input[type="tel"]',
+    'input[name="phone"]', 'input[name="fave_property_agent_display_option"]',
+    'input[name="mobile"]', 'input[type="tel"]',
     'input[placeholder*="téléphone" i]', 'input[placeholder*="phone" i]',
-    'input[placeholder*="numéro" i]', 'input[placeholder*="contact" i]',
   ], annonce.tel);
 
   await uploadPhotos(page, annonce.photos);
-  await screenshot(page, `${siteName}-filled`);
+  await screenshot(page, 'ivoiredomi-filled');
 
-  // Soumettre
   const submitted = await clickAny(page, [
     'button[type="submit"]', 'input[type="submit"]',
-    'button.btn-primary', 'button.btn-success',
-    'button[class*="submit"]', 'button[class*="publish"]',
-    'button[class*="poster"]', 'button[class*="publier"]',
-    'button[class*="valider"]', 'button[class*="envoyer"]',
+    'button.btn-primary', 'button[name="submit"]',
+    'input[name="submit"]', 'button[class*="submit"]',
+    'button[class*="publish"]',
   ]);
-
   await wait(5000);
-  await screenshot(page, `${siteName}-result`);
-
-  if (submitted) {
-    console.log(`  ✅ Annonce soumise sur ${siteName}`);
-  } else {
-    console.log(`  ⚠️  Bouton submit non trouvé sur ${siteName} — vérifier screenshot-${siteName}-filled.png`);
-  }
+  await screenshot(page, 'ivoiredomi-result');
+  if (submitted) console.log('  ✅ Annonce soumise sur Ivoiredomi');
 }
 
-// ─── JIJI ────────────────────────────────────────────────────────────────────
-async function posterJiji(page, annonce) {
-  console.log('\n  🌐 JIJI.CO.CI');
-  await seConnecter(page, 'https://jiji.co.ci/login', COMPTES.jiji.email, COMPTES.jiji.password, 'jiji');
-  await page.goto('https://jiji.co.ci/post-ad', { waitUntil: 'networkidle2', timeout: 30000 });
-  await remplirFormulaire(page, annonce, 'jiji');
-}
-
-// ─── IVOIREDOMI ──────────────────────────────────────────────────────────────
-async function posterIvoiredomi(page, annonce) {
-  console.log('\n  🌐 IVOIREDOMI.CI');
-  const loginUrls = ['https://ivoiredomi.ci/connexion', 'https://ivoiredomi.ci/login', 'https://www.ivoiredomi.ci/connexion'];
-  for (const url of loginUrls) {
-    try {
-      await seConnecter(page, url, COMPTES.ivoiredomi.email, COMPTES.ivoiredomi.password, 'ivoiredomi');
-      break;
-    } catch(e) {}
-  }
-  const postUrls = ['https://ivoiredomi.ci/deposer-annonce', 'https://ivoiredomi.ci/poster-annonce', 'https://ivoiredomi.ci/annonce/new'];
-  for (const url of postUrls) {
-    try {
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-      break;
-    } catch(e) {}
-  }
-  await remplirFormulaire(page, annonce, 'ivoiredomi');
-}
-
-// ─── MOBOO ───────────────────────────────────────────────────────────────────
+// ─── MOBOO — Attente longue pour React/Vue ────────────────────────────────────
+// Moboo charge tout en JavaScript (0 inputs détectés) — framework SPA
+// Solution : attendre beaucoup plus longtemps + utiliser waitForSelector
 async function posterMoboo(page, annonce) {
   console.log('\n  🌐 MOBOO.CI');
-  const loginUrls = ['https://moboo.ci/login', 'https://moboo.ci/connexion', 'https://www.moboo.ci/login'];
+
+  await page.goto('https://moboo.ci', { waitUntil: 'networkidle2', timeout: 30000 });
+  await wait(5000);
+
+  // Trouver la page de login
+  const loginUrls = ['https://moboo.ci/login', 'https://moboo.ci/connexion', 'https://moboo.ci/se-connecter', 'https://moboo.ci/auth/login'];
   for (const url of loginUrls) {
     try {
-      await seConnecter(page, url, COMPTES.moboo.email, COMPTES.moboo.password, 'moboo');
-      break;
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
+      await wait(6000); // Attente longue pour SPA
+      await screenshot(page, `moboo-login`);
+      const html = await page.content();
+      if (html.includes('password') || html.includes('mot de passe') || html.includes('login')) {
+        break;
+      }
     } catch(e) {}
   }
-  const postUrls = ['https://moboo.ci/deposer-annonce', 'https://moboo.ci/annonce/new', 'https://moboo.ci/poster'];
+
+  await typeIn(page, [
+    'input[type="email"]', 'input[name="email"]', 'input[name="username"]',
+    'input[id="email"]', 'input[placeholder*="email" i]', 'input[placeholder*="mail" i]',
+  ], COMPTES.moboo.email);
+
+  await typeIn(page, ['input[type="password"]', 'input[name="password"]'], COMPTES.moboo.password);
+
+  await clickAny(page, ['button[type="submit"]', 'input[type="submit"]', 'button.btn-primary', 'button[class*="login"]', 'button[class*="connect"]']);
+  await wait(6000);
+
+  const postUrls = ['https://moboo.ci/deposer-annonce', 'https://moboo.ci/annonce/new', 'https://moboo.ci/poster', 'https://moboo.ci/add', 'https://moboo.ci/create'];
   for (const url of postUrls) {
     try {
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 20000 });
-      break;
+      await wait(6000);
+      await screenshot(page, 'moboo-form');
+      const html = await page.content();
+      if (html.includes('title') || html.includes('prix') || html.includes('description')) break;
     } catch(e) {}
   }
-  await remplirFormulaire(page, annonce, 'moboo');
+
+  const desc = annonce.description || `${annonce.type_bien} · ${annonce.ville} ${annonce.quartier} · ${annonce.prix} FCFA · Tél: ${annonce.tel}`;
+
+  await typeIn(page, ['input[name="title"]', 'input[name="titre"]', 'input[placeholder*="titre" i]', 'input[placeholder*="title" i]'], annonce.titre);
+  await typeIn(page, ['input[name="price"]', 'input[name="prix"]', 'input[placeholder*="prix" i]', 'input[placeholder*="price" i]'], annonce.prix);
+  await typeIn(page, ['textarea[name="description"]', 'textarea[placeholder*="description" i]', 'textarea'], desc);
+  await typeIn(page, ['input[type="tel"]', 'input[name="phone"]', 'input[name="telephone"]', 'input[placeholder*="téléphone" i]', 'input[placeholder*="phone" i]'], annonce.tel);
+
+  await uploadPhotos(page, annonce.photos);
+  await screenshot(page, 'moboo-filled');
+
+  const submitted = await clickAny(page, ['button[type="submit"]', 'input[type="submit"]', 'button.btn-primary', 'button[class*="submit"]', 'button[class*="publish"]', 'button[class*="poster"]']);
+  await wait(5000);
+  await screenshot(page, 'moboo-result');
+  if (submitted) console.log('  ✅ Annonce soumise sur Moboo');
 }
 
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 (async () => {
-  console.log(`\n🏠 AnnonceCI v2 — ${ANNONCES.length} annonce(s) à publier\n`);
+  console.log(`\n🏠 AnnonceCI v3 — ${ANNONCES.length} annonce(s) à publier\n`);
 
   const browser = await puppeteer.launch({
-    args: chromium.args,
+    args: [...chromium.args, '--disable-blink-features=AutomationControlled'],
     defaultViewport: chromium.defaultViewport,
     executablePath: await chromium.executablePath(),
     headless: chromium.headless,
@@ -282,7 +323,13 @@ async function posterMoboo(page, annonce) {
   await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
   await page.setViewport({ width: 1280, height: 800 });
 
-  // Ignore les erreurs de ressources non critiques
+  // Masquer qu'on est un bot
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US'] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+  });
+
   page.on('requestfailed', () => {});
 
   let success = 0, errors = 0;
